@@ -901,7 +901,8 @@ const OptionIterator = struct {
     }
 };
 
-pub fn parsePcapng(buf: []const u8) !void {
+pub fn parsePcapng(buf: []const u8) !PcapgnStats {
+    var stats = PcapgnStats{ .size = buf.len };
     var buffer = buf;
     var endian: ?std.builtin.Endian = null;
     while (buffer.len > 0) {
@@ -910,35 +911,92 @@ pub fn parsePcapng(buf: []const u8) !void {
             if (std.mem.eql(u8, buffer[0..4], &SHB_BLOCK_TYPE)) {
                 const shb = try Shb.init(buffer);
                 endian = shb.endian;
+                stats.sections += 1;
                 break :blk shb.block_length;
             }
             if (std.mem.eql(u8, buffer[0..4], &idbBlockType(endian orelse return error.EndianNotDefined))) {
                 const idb = try Idb.init(buffer, endian orelse return error.EndianNotDefined);
-                // ...
+                stats.interfaces += 1;
+                stats.block_types.idb += 1;
                 break :blk idb.block_length;
             }
             if (std.mem.eql(u8, buffer[0..4], &epbBlockType(endian orelse return error.EndianNotDefined))) {
                 const epb = try Epb.init(buffer, endian orelse return error.EndianNotDefined);
-                // ...
+                stats.block_types.epb += 1;
+                stats.packets += 1;
                 break :blk epb.block_length;
             }
             if (std.mem.eql(u8, buffer[0..4], &isbBlockType(endian orelse return error.EndianNotDefined))) {
                 const isb = try Isb.init(buffer, endian orelse return error.EndianNotDefined);
-                // ...
+                stats.block_types.isb += 1;
                 break :blk isb.block_length;
             }
             if (std.mem.eql(u8, buffer[0..4], &nrbBlockType(endian orelse return error.EndianNotDefined))) {
                 const nrb = try Nrb.init(buffer, endian orelse return error.EndianNotDefined);
-                // ...
+                stats.block_types.nrb += 1;
                 break :blk nrb.block_length;
             }
             if (std.mem.eql(u8, buffer[0..4], &spbBlockType(endian orelse return error.EndianNotDefined))) {
                 const spb = try Spb.init(buffer, endian orelse return error.EndianNotDefined);
-                // ...
+                stats.block_types.spb += 1;
+                stats.packets += 1;
                 break :blk spb.block_length;
             }
+            stats.block_types.other += 1;
             break :blk std.mem.readInt(u32, buffer[4..8], endian orelse return error.EndianNotDefined);
         };
         buffer = buffer[block_length..];
+        stats.blocks += 1;
     }
+    stats.avg_packet_size = stats.size / stats.blocks;
+    return stats;
 }
+
+// Pangz PCAPNG Analysis
+// ────────────────────────────────────────
+
+// File: capture.pcapng
+// Size:              1.84 GB
+// Sections:          2
+// Interfaces:        4
+// Blocks:            8,492,103
+
+// Packets:           7,931,442
+// Captured bytes:    1.72 GB
+// Original bytes:    2.31 GB
+// Duration:          02:14:37
+
+// Packets/sec:       58,912
+// Throughput:        2.13 MB/s
+// Avg packet size:   217 bytes
+
+// Block types
+//   EPB:             7,931,442
+//   SPB:                     0
+//   IDB:                     4
+//   NRB:                     12
+//   Other:                   645
+const PcapgnStats = struct {
+    size: usize = 0,
+    sections: usize = 0,
+    interfaces: usize = 0,
+    blocks: usize = 0,
+
+    packets: usize = 0,
+    captured_bytes: u128 = 0,
+    original_bytes: u128 = 0,
+    duration: usize = 0,
+
+    packets_sec: usize = 0,
+    throughput_bps: usize = 0,
+    avg_packet_size: usize = 0,
+
+    block_types: struct {
+        epb: usize = 0,
+        spb: usize = 0,
+        idb: usize = 0,
+        nrb: usize = 0,
+        isb: usize = 0,
+        other: usize = 0,
+    } = .{},
+};
