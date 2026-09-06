@@ -22,14 +22,14 @@
 
  Capture Metrics:
    Total Packets:    1670000
-   Captured Bytes:   0 bytes
-   Original Bytes:   0 bytes
-   Duration:         0 ms
+   Captured Bytes:   1590583000 bytes
+   Original Bytes:   1590583000 bytes
+   Duration:         8.166391849517822 s
 
  Performance & Throughput:
-   Packets / Sec:    0 pps
+   Packets / Sec:    204496.67745230763 pps
    Avg Packet Size:  985 bytes
-   Throughput:       0 bps (0.00 Mbps)
+   Throughput:       194771819.5880981 bps (194.77 Mbps)
 
  Block Breakdown:
    Enhanced Packets (EPB): 1670000
@@ -56,16 +56,16 @@ The used file is `testfiles/challenge01_ooo_stream.pcapng` repeated 1000 times, 
 ```
 $ hyperfine --warmup 10 './pangz testfiles/large.pcapng > /dev/null' 'capinfos -c testfiles/large.pcapng'
 Benchmark 1: ./pangz testfiles/large.pcapng > /dev/null
-  Time (mean ± σ):     222.7 ms ±   1.3 ms    [User: 78.0 ms, System: 144.1 ms]
-  Range (min … max):   219.6 ms … 224.5 ms    13 runs
+  Time (mean ± σ):     281.1 ms ±   3.4 ms    [User: 132.9 ms, System: 147.4 ms]
+  Range (min … max):   278.1 ms … 289.2 ms    10 runs
  
 Benchmark 2: capinfos -c testfiles/large.pcapng
-  Time (mean ± σ):     734.9 ms ±   6.1 ms    [User: 553.2 ms, System: 180.0 ms]
-  Range (min … max):   723.2 ms … 742.6 ms    10 runs
+  Time (mean ± σ):     742.6 ms ±  26.1 ms    [User: 566.4 ms, System: 173.9 ms]
+  Range (min … max):   719.5 ms … 811.1 ms    10 runs
  
 Summary
   ./pangz testfiles/large.pcapng > /dev/null ran
-    3.30 ± 0.03 times faster than capinfos -c testfiles/large.pcapng
+    2.64 ± 0.10 times faster than capinfos -c testfiles/large.pcapng
 ```
 
 ### Benchmark System

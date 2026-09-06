@@ -162,6 +162,23 @@ const Idb = struct {
 
 const MIN_IDB_SIZE = 20;
 
+const Resolution = enum(u1) {
+    Decimal = 0,
+    Binary = 1,
+};
+
+const TsResol = packed struct {
+    exponent: u7 = 6,
+    resolution: Resolution = .Decimal,
+
+    fn unitsPerSecond(self: TsResol) u128 {
+        return switch (self.resolution) {
+            .Binary => (@as(u128, 1) << self.exponent),
+            .Decimal => std.math.pow(u128, 10, self.exponent),
+        };
+    }
+};
+
 const IdbOption = union(enum) {
     end_of_option: void,
     comment: []const u8,
@@ -175,7 +192,7 @@ const IdbOption = union(enum) {
     eui_addr: []const u8, // 8
 
     speed: u64,
-    tsresol: u8,
+    tsresol: TsResol,
     tzone: i32,
 
     filter: []const u8,
@@ -694,7 +711,7 @@ const Option = struct {
     pub fn idb(self: *const Option) !IdbOption {
         const idb_code: IdbOptionCode = @enumFromInt(self.code);
         switch (idb_code) {
-            .end_of_options => return IdbOption{ .end_of_option = void },
+            .end_of_options => return IdbOption{ .end_of_option = {} },
             .comment => return IdbOption{ .comment = self.value },
             .name => return IdbOption{ .name = self.value },
             .description => return IdbOption{ .comment = self.value },
@@ -716,40 +733,40 @@ const Option = struct {
             },
             .speed => {
                 if (self.value.len != 8) return error.IpError;
-                const speed = std.mem.readInt(u64, self.value, self.endian);
+                const speed = std.mem.readInt(u64, self.value[0..8], self.endian);
                 return IdbOption{ .speed = speed };
             },
             .tsresol => {
                 if (self.value.len != 1) return error.IpError;
-                const tsresol = std.mem.readInt(u8, self.value, self.endian);
+                const tsresol: TsResol = @bitCast(self.value[0]);
                 return IdbOption{ .tsresol = tsresol };
             },
             .tzone => {
                 if (self.value.len != 4) return error.IpError;
-                const tzone = std.mem.readInt(i32, self.value, self.endian);
+                const tzone = std.mem.readInt(i32, self.value[0..4], self.endian);
                 return IdbOption{ .tzone = tzone };
             },
             .filter => return IdbOption{ .filter = self.value },
             .os => return IdbOption{ .os = self.value },
             .fcslen => {
                 if (self.value.len != 1) return error.IpError;
-                const fcslen = std.mem.readInt(u8, self.value, self.endian);
+                const fcslen = std.mem.readInt(u8, self.value[0..1], self.endian);
                 return IdbOption{ .fcslen = fcslen };
             },
             .tsoffset => {
                 if (self.value.len != 8) return error.IpError;
-                const tsoffset = std.mem.readInt(i64, self.value, self.endian);
+                const tsoffset = std.mem.readInt(i64, self.value[0..8], self.endian);
                 return IdbOption{ .tsoffset = tsoffset };
             },
             .hardware => return IdbOption{ .hardware = self.value },
             .txspeed => {
                 if (self.value.len != 8) return error.IpError;
-                const txspeed = std.mem.readInt(u64, self.value, self.endian);
+                const txspeed = std.mem.readInt(u64, self.value[0..8], self.endian);
                 return IdbOption{ .txspeed = txspeed };
             },
             .rxspeed => {
                 if (self.value.len != 8) return error.IpError;
-                const rxspeed = std.mem.readInt(u64, self.value, self.endian);
+                const rxspeed = std.mem.readInt(u64, self.value[0..8], self.endian);
                 return IdbOption{ .rxspeed = rxspeed };
             },
             .iana_tzname => return IdbOption{ .iana_tzname = self.value },
@@ -879,13 +896,15 @@ const OptionIterator = struct {
     endian: std.builtin.Endian,
 
     pub fn next(self: *OptionIterator) !?Option {
+        if (self.buffer.len == 0) return null;
         const buffer = self.buffer[self.offset..];
+        if (buffer.len == 0) return error.EndOfOptions;
         if (buffer.len < 4) return error.TruncatedOption;
 
-        const code = std.mem.readInt(u16, buffer, self.endian);
+        const code = std.mem.readInt(u16, buffer[0..2], self.endian);
         if (code == 0) return null;
 
-        const length = std.mem.readInt(u16, buffer[2..], self.endian);
+        const length = std.mem.readInt(u16, buffer[2..4], self.endian);
         const padding = (4 - (length % 4)) % 4;
         const total = 4 + length + padding;
 
@@ -905,6 +924,10 @@ pub fn parsePcapng(buf: []const u8) !PcapgnStats {
     var stats = PcapgnStats{ .size = buf.len };
     var buffer = buf;
     var endian: ?std.builtin.Endian = null;
+    var next_if_id: usize = 0;
+    var tsresol_array = [_]TsResol{TsResol{}} ** 256;
+    var start_sec: f64 = 0;
+    var end_sec: f64 = 0;
     while (buffer.len > 0) {
         if (buffer.len < 4) return error.TruncatedMessage;
         const block_length = blk: {
@@ -918,12 +941,29 @@ pub fn parsePcapng(buf: []const u8) !PcapgnStats {
                 const idb = try Idb.init(buffer, endian orelse return error.EndianNotDefined);
                 stats.interfaces += 1;
                 stats.block_types.idb += 1;
+                var it_opt = idb.iterateOptions();
+                while (try it_opt.next()) |option| {
+                    switch (try option.idb()) {
+                        // found it
+                        .tsresol => |value| tsresol_array[next_if_id] = value,
+                        else => continue,
+                    }
+                }
+                next_if_id += 1;
                 break :blk idb.block_length;
             }
             if (std.mem.eql(u8, buffer[0..4], &epbBlockType(endian orelse return error.EndianNotDefined))) {
                 const epb = try Epb.init(buffer, endian orelse return error.EndianNotDefined);
                 stats.block_types.epb += 1;
                 stats.packets += 1;
+                stats.captured_bytes += epb.captured_length;
+                stats.original_bytes += epb.original_length;
+                const ts = (@as(u64, epb.timestamp_high) << 32) | epb.timestamp_low;
+                const ts_sec: f64 =
+                    @as(f64, @floatFromInt(ts)) /
+                    @as(f64, @floatFromInt(tsresol_array[epb.interface_id].unitsPerSecond()));
+                if (start_sec == 0 or ts_sec < start_sec) start_sec = ts_sec;
+                if (end_sec == 0 or ts_sec > end_sec) end_sec = ts_sec;
                 break :blk epb.block_length;
             }
             if (std.mem.eql(u8, buffer[0..4], &isbBlockType(endian orelse return error.EndianNotDefined))) {
@@ -948,7 +988,10 @@ pub fn parsePcapng(buf: []const u8) !PcapgnStats {
         buffer = buffer[block_length..];
         stats.blocks += 1;
     }
-    stats.avg_packet_size = stats.size / stats.blocks;
+    stats.duration_sec = end_sec - start_sec;
+    stats.avg_packet_size = @as(f64, @floatFromInt(stats.captured_bytes)) / @as(f64, @floatFromInt(stats.packets));
+    stats.throughput_bps = @as(f64, @floatFromInt(stats.captured_bytes * 8)) / stats.duration_sec;
+    stats.packets_sec = @as(f64, @floatFromInt(stats.packets)) / stats.duration_sec;
     return stats;
 }
 
@@ -964,10 +1007,10 @@ pub fn parsePcapng(buf: []const u8) !PcapgnStats {
 // Packets:           7,931,442
 // Captured bytes:    1.72 GB
 // Original bytes:    2.31 GB
-// Duration:          02:14:37
+// Duration sec:      02:14:37
 
 // Packets/sec:       58,912
-// Throughput:        2.13 MB/s
+// Throughput:        2.13 Mbps
 // Avg packet size:   217 bytes
 
 // Block types
@@ -983,13 +1026,13 @@ const PcapgnStats = struct {
     blocks: usize = 0,
 
     packets: usize = 0,
-    captured_bytes: u128 = 0,
-    original_bytes: u128 = 0,
-    duration: usize = 0,
+    captured_bytes: u64 = 0,
+    original_bytes: u64 = 0,
+    duration_sec: f64 = 0,
 
-    packets_sec: usize = 0,
-    throughput_bps: usize = 0,
-    avg_packet_size: usize = 0,
+    packets_sec: f64 = 0,
+    throughput_bps: f64 = 0,
+    avg_packet_size: f64 = 0,
 
     block_types: struct {
         epb: usize = 0,
