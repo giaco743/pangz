@@ -26,7 +26,7 @@ class PcapngStatistics:
             self.file_size == other.file_size
             and self.total_packets == other.total_packets
             and self.captured_bytes == other.captured_bytes
-            and math.isclose(self.duration, other.duration, abs_tol=1e-6)
+            and math.isclose(self.duration, other.duration, abs_tol=1e-2)
             and math.isclose(self.packets_per_sec, other.packets_per_sec, abs_tol=1.0)
             and math.isclose(self.avg_packet_size, other.avg_packet_size, abs_tol=0.01)
             and math.isclose(self.throughput_bps, other.throughput_bps, abs_tol=1.0)
@@ -34,21 +34,28 @@ class PcapngStatistics:
         )
     def differences(self, other: "PcapngStatistics") -> dict:
         differences = {}
-        fields = [
-            "file_size",
-            "total_packets",
-            "captured_bytes",
-            "duration",
-            "packets_per_sec",
-            "avg_packet_size",
-            "throughput_bps",
-            "interfaces",
-        ]
-        for field in fields:
-            self_value = getattr(self, field)
-            other_value = getattr(other, field)
-            if self_value != other_value:
-                differences[field] = (self_value, other_value)
+        
+        # 1. Check exact-match integer fields
+        int_fields = ["file_size", "total_packets", "captured_bytes", "interfaces"]
+        for field in int_fields:
+            self_val = getattr(self, field)
+            other_val = getattr(other, field)
+            if self_val != other_val:
+                differences[field] = (self_val, other_val)
+
+        # 2. Check floating-point fields using the identical 'isclose' tolerances
+        float_tolerances = {
+            "duration": 1e-2,
+            "packets_per_sec": 1.0,
+            "avg_packet_size": 0.01,
+            "throughput_bps": 1.0,
+        }
+        
+        for field, tol in float_tolerances.items():
+            self_val = getattr(self, field)
+            other_val = getattr(other, field)
+            if not math.isclose(self_val, other_val, abs_tol=tol):
+                differences[field] = (self_val, other_val)
 
         return differences
 

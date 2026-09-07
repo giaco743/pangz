@@ -256,9 +256,19 @@ const LinkType = enum(u16) {
     pflog = 117,
     ieee802_11_radio = 127,
     linux_irda = 144,
+    bluetooth_h4_with_ph = 201, // Added with its official PCAP spec value
+    bluetooth_linux_monitor = 254, // Added with its official PCAP spec value
     linux_sll2 = 276,
-
     _,
+    pub fn overheadBytes(self: LinkType) u32 {
+        return switch (self) {
+            .linux_sll => 16,
+            .linux_sll2 => 20,
+            .bluetooth_h4_with_ph => 4,
+            .bluetooth_linux_monitor => 4,
+            else => 0,
+        };
+    }
 };
 
 const Spb = struct {
@@ -926,6 +936,7 @@ pub fn parsePcapng(buf: []const u8) !PcapgnStats {
     var endian: ?std.builtin.Endian = null;
     var next_if_id: usize = 0;
     var tsresol_array = [_]TsResol{TsResol{}} ** 256;
+    var link_type_array = [_]LinkType{LinkType.null} ** 256;
     var start_sec: f64 = 0;
     var end_sec: f64 = 0;
     while (buffer.len > 0) {
@@ -939,6 +950,7 @@ pub fn parsePcapng(buf: []const u8) !PcapgnStats {
             }
             if (std.mem.eql(u8, buffer[0..4], &idbBlockType(endian orelse return error.EndianNotDefined))) {
                 const idb = try Idb.init(buffer, endian orelse return error.EndianNotDefined);
+                link_type_array[next_if_id] = idb.link_type;
                 stats.interfaces += 1;
                 stats.block_types.idb += 1;
                 var it_opt = idb.iterateOptions();
@@ -956,7 +968,7 @@ pub fn parsePcapng(buf: []const u8) !PcapgnStats {
                 const epb = try Epb.init(buffer, endian orelse return error.EndianNotDefined);
                 stats.block_types.epb += 1;
                 stats.packets += 1;
-                stats.captured_bytes += epb.captured_length;
+                stats.captured_bytes += epb.captured_length - link_type_array[epb.interface_id].overheadBytes();
                 stats.original_bytes += epb.original_length;
                 const ts = (@as(u64, epb.timestamp_high) << 32) | epb.timestamp_low;
                 const ts_sec: f64 =
